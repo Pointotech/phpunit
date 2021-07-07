@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /*
  * This file is part of PHPUnit.
  *
@@ -7,6 +9,7 @@
  * For the full copyright and license information, please view the LICENSE
  * file that was distributed with this source code.
  */
+
 namespace PHPUnit\Util\TestDox;
 
 use const PHP_EOL;
@@ -20,16 +23,19 @@ use function preg_match;
 use function sprintf;
 use function strlen;
 use function strpos;
+use Throwable;
 use function trim;
+
+use PHPUnit\Framework\ExceptionWrapper;
 use PHPUnit\Framework\Test;
 use PHPUnit\Framework\TestCase;
+use PHPUnit\Framework\TestFailure;
 use PHPUnit\Framework\TestResult;
 use PHPUnit\Runner\BaseTestRunner;
 use PHPUnit\Runner\PhptTestCase;
 use PHPUnit\Util\Color;
 use SebastianBergmann\Timer\ResourceUsageFormatter;
 use SebastianBergmann\Timer\Timer;
-use Throwable;
 
 /**
  * @internal This class is not covered by the backward compatibility promise for PHPUnit
@@ -184,8 +190,10 @@ class CliTestDoxPrinter extends TestDoxPrinter
     protected function writeTestResult(array $prevResult, array $result): void
     {
         // spacer line for new suite headers and after verbose messages
-        if ($prevResult['testName'] !== '' &&
-            (!empty($prevResult['message']) || $prevResult['className'] !== $result['className'])) {
+        if (
+            $prevResult['testName'] !== '' &&
+            (!empty($prevResult['message']) || $prevResult['className'] !== $result['className'])
+        ) {
             $this->write(PHP_EOL);
         }
 
@@ -259,7 +267,10 @@ class CliTestDoxPrinter extends TestDoxPrinter
         $trace = \PHPUnit\Util\Filter::getFilteredStacktrace($t);
 
         if (!$this->colors) {
-            return $trace;
+            // TODO: Figure out how to enable "colors" by default, or fall back
+            // to still printing something if colors are disabled, so that this
+            // doesn't completely break the display of the stack trace.
+            //return $trace;
         }
 
         $lines    = [];
@@ -278,7 +289,36 @@ class CliTestDoxPrinter extends TestDoxPrinter
             }
         }
 
-        return implode('', $lines);
+        $result = implode('', $lines);
+
+        if ($t instanceof ExceptionWrapper) {
+            $previous = $t->getOriginalException()->getPrevious();
+            while ($previous) {
+                $file = $previous->getFile();
+                $line_number = $previous->getLine();
+                $result .= "\nCaused by:\n" . TestFailure::exceptionToString($previous) . "\nat $file($line_number)\n\nStack trace:\n" . $this->render_stack_trace($previous);
+                $previous = $previous->getPrevious();
+            }
+        }
+
+        return $result;
+    }
+
+    private function render_stack_trace(Throwable $throwable)
+    {
+        $stack_frames = $throwable->getTrace();
+
+        $lines = array_map(
+            function (array $stack_frame): string {
+                $file_name = $stack_frame['file'];
+                $line_number = $stack_frame['line'];
+                $function_name = $stack_frame['function'];
+                return "$file_name($line_number): $function_name";
+            },
+            $stack_frames
+        );
+
+        return implode("\n", $lines);
     }
 
     protected function formatTestResultMessage(Throwable $t, array $result, ?string $prefix = null): string
